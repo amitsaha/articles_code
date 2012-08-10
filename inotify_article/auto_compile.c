@@ -1,0 +1,126 @@
+/* auto_compile.c*/
+
+/* Automatic compilation of C code using Inotify
+ * Assumptions:
+ * argv[1]: where the source codes are stored
+ * bin/ sub-directory: in which the binaries will be stored
+ * 
+*/
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <errno.h>
+#include <sys/types.h>
+#include <sys/inotify.h>
+#include <limits.h>
+
+#define MAX_EVENTS 1024 /*Max. number of events to process at one go*/
+#define LEN_NAME 16 /*Assuming that the length of the filename won't exceed 16 bytes*/
+#define EVENT_SIZE  ( sizeof (struct inotify_event) ) /*size of one event*/
+#define BUF_LEN     ( MAX_EVENTS * ( EVENT_SIZE + LEN_NAME )) /*buffer to store the data of events*/
+
+int main( int argc, char **argv ) 
+{
+  int length, i = 0, wd;
+  int fd;
+  char buffer[BUF_LEN],cur_dir[BUF_LEN];
+
+  char command[100],copy_cmd[100];
+  strcpy(command,"gcc -o ");
+
+  /* Initialize Inotify*/
+  fd = inotify_init();
+  if ( fd < 0 ) {
+    perror( "Couldn't initialize inotify");
+  }
+
+  /* add watch to starting directory */
+  wd = inotify_add_watch(fd, argv[1], IN_CREATE | IN_MODIFY); 
+
+  if (wd == -1)
+    {
+      printf("Couldn't add watch to %s\n",argv[1]);
+    }
+  else
+    {
+      printf("Watching:: %s\n",argv[1]);
+    }
+
+  /* do it forever*/
+  while(1)
+    {
+      i = 0;
+      length = read( fd, buffer, BUF_LEN );  
+
+      if ( length < 0 ) {
+	perror( "read" );
+      }  
+
+      while ( i < length ) {
+	struct inotify_event *event = ( struct inotify_event * ) &buffer[ i ];
+	if ( event->len ) {
+	  if ( event->mask & IN_CREATE) {
+	    if (event->mask & IN_ISDIR)
+	      printf( "The directory %s was Created.\n", event->name );       
+	    else
+	      {
+		printf( "Compiling::  %s \n", event->name);       
+
+		/*save the current dir*/
+		getcwd(cur_dir,BUF_LEN);
+		chdir(argv[1]);
+
+		/* form string for gcc*/
+		strcat(command,"bin/"); 
+		strcat(command,event->name);
+		strcat(command,".out ");
+		strcat(command,event->name);
+
+		/* execute gcc*/
+		system(command);
+
+		/*change back to dir*/
+		chdir(cur_dir);
+		strcpy(command,"gcc -o ");
+	      }
+		
+	  }
+	  
+	  if ( event->mask & IN_MODIFY) {
+	    if (event->mask & IN_ISDIR)
+	      printf( "The directory %s was modified.\n", event->name );       
+	    else
+	      {
+		printf( "Compiling:: %s \n", event->name);       
+
+		/*save the current dir*/
+		getcwd(cur_dir,BUF_LEN);
+		chdir(argv[1]);
+
+		/* form string for gcc*/
+		strcat(command,"bin/");
+		strcat(command,event->name);
+		strcat(command,".out ");
+		strcat(command,event->name);
+
+		/* execute gcc*/
+		system(command);
+
+		/*change back to dir*/
+		chdir(cur_dir);
+		strcpy(command,"gcc -o ");
+	      }
+
+	  }	  
+	  i += EVENT_SIZE + event->len;
+	}
+      }
+    }
+
+  /* Clean up*/
+  inotify_rm_watch( fd, wd );
+  close( fd );
+  
+  return 0;
+}
